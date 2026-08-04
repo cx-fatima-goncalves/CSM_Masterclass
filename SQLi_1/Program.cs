@@ -17,9 +17,8 @@ namespace SQLi_1
                 var pwd = Encrypt(args[1]);
                 Login(user, pwd);
             }
-            catch  
+            catch
             {
-				var password3 = "1!.Acjjjj";
                 Console.WriteLine("An error has occurred !!");
             }
             
