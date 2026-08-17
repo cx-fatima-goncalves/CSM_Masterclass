@@ -189,9 +189,179 @@ namespace SQLi_1.Tests
                 "credential has NOT been removed.");
         }
 
+        // =========================================================================
+        // SQL Injection remediation tests (CWE-89) for "SQLi_1 - Copy/Program.cs"
+        // =========================================================================
+
+        // Path to the file that contained the SQL injection vulnerability.
+        private const string SqliCopySourceFilePath = @"..\..\..\..\SQLi_1 - Copy\Program.cs";
+
+        /// <summary>
+        /// Verifies that the Login method no longer builds a SQL query by string
+        /// concatenation with user-supplied input.  String interpolation / concatenation
+        /// of username or password directly into the query string is the root cause of
+        /// CWE-89 (SQL Injection).
+        /// </summary>
+        [TestMethod]
+        public void Login_SourceCode_ShouldNotConcatenateUsernameIntoSqlString()
+        {
+            string sourceContent = ReadCopySourceFile();
+            if (sourceContent == null) return;
+
+            // The vulnerable pattern interpolated the username directly into the query
+            // string using single-quote delimiters, e.g.:
+            //   "... WHERE username = '" + username + "' ..."
+            // None of these patterns should appear after remediation.
+            Assert.IsFalse(
+                sourceContent.Contains("username + \"'"),
+                "Vulnerable pattern '... + username + \"'...' found in Login(). " +
+                "The username must be passed via a SqlParameter, not concatenated.");
+
+            Assert.IsFalse(
+                sourceContent.Contains("\"' + username"),
+                "Vulnerable pattern '\"'... + username' found in Login(). " +
+                "The username must be passed via a SqlParameter, not concatenated.");
+        }
+
+        /// <summary>
+        /// Verifies that the Login method no longer builds a SQL query by string
+        /// concatenation with the password argument.
+        /// </summary>
+        [TestMethod]
+        public void Login_SourceCode_ShouldNotConcatenatePasswordIntoSqlString()
+        {
+            string sourceContent = ReadCopySourceFile();
+            if (sourceContent == null) return;
+
+            Assert.IsFalse(
+                sourceContent.Contains("password + \"'"),
+                "Vulnerable pattern '... + password + \"'...' found in Login(). " +
+                "The password must be passed via a SqlParameter, not concatenated.");
+
+            Assert.IsFalse(
+                sourceContent.Contains("\"' + password"),
+                "Vulnerable pattern '\"'... + password' found in Login(). " +
+                "The password must be passed via a SqlParameter, not concatenated.");
+        }
+
+        /// <summary>
+        /// Verifies that the fixed Login method uses named SQL parameters (@username
+        /// and @pwd) in its query string — the standard .NET pattern for parameterized
+        /// queries that prevents SQL injection.
+        /// </summary>
+        [TestMethod]
+        public void Login_SourceCode_ShouldUseNamedParametersInQueryString()
+        {
+            string sourceContent = ReadCopySourceFile();
+            if (sourceContent == null) return;
+
+            Assert.IsTrue(
+                sourceContent.Contains("@username"),
+                "The fixed Login() method must reference the named parameter @username " +
+                "in the SQL query string.");
+
+            Assert.IsTrue(
+                sourceContent.Contains("@pwd"),
+                "The fixed Login() method must reference the named parameter @pwd " +
+                "in the SQL query string.");
+        }
+
+        /// <summary>
+        /// Verifies that SqlParameter.Add (or AddWithValue) is called in the Login
+        /// method so that values are bound via the ADO.NET parameterized-query API
+        /// rather than injected into the query string.
+        /// </summary>
+        [TestMethod]
+        public void Login_SourceCode_ShouldBindParametersViaSqlParameterApi()
+        {
+            string sourceContent = ReadCopySourceFile();
+            if (sourceContent == null) return;
+
+            // After remediation the source should call cmd.Parameters.Add(...)
+            // or cmd.Parameters.AddWithValue(...) — both are SAST-recognized
+            // safe sinks for ADO.NET parameterized queries.
+            bool usesParameterAdd =
+                sourceContent.Contains("Parameters.Add(") ||
+                sourceContent.Contains("Parameters.AddWithValue(");
+
+            Assert.IsTrue(
+                usesParameterAdd,
+                "Login() must bind user input via cmd.Parameters.Add() or " +
+                "cmd.Parameters.AddWithValue() to prevent SQL injection (CWE-89). " +
+                "Neither call was found in the source.");
+        }
+
+        /// <summary>
+        /// Verifies that the SqlCommand is constructed with both the query string
+        /// AND the SqlConnection in the constructor (the two-argument overload), which
+        /// is the idiomatic safe pattern that pairs naturally with parameterized queries.
+        /// </summary>
+        [TestMethod]
+        public void Login_SourceCode_ShouldPassConnectionToSqlCommandConstructor()
+        {
+            string sourceContent = ReadCopySourceFile();
+            if (sourceContent == null) return;
+
+            // The safe pattern is: new SqlCommand(sql, conn)
+            // The vulnerable pattern was: new SqlCommand(sql) + cmd.Connection = conn
+            // after manually building 'sql' via string concatenation.
+            Assert.IsTrue(
+                sourceContent.Contains("new SqlCommand(sql, conn)"),
+                "Login() should use the SqlCommand(string, SqlConnection) constructor " +
+                "overload together with parameterized queries. " +
+                "'new SqlCommand(sql, conn)' was not found in the source.");
+        }
+
+        /// <summary>
+        /// Verifies the complete safe query template is present.  The constant
+        /// part of the query must use placeholder tokens, not literal column values
+        /// that rely on quoting to delimit user input.
+        /// </summary>
+        [TestMethod]
+        public void Login_SourceCode_SqlQueryShouldUseParameterPlaceholders()
+        {
+            string sourceContent = ReadCopySourceFile();
+            if (sourceContent == null) return;
+
+            // The fixed query string must look like:
+            //   "SELECT * FROM Users WHERE username = @username AND pwd = @pwd"
+            Assert.IsTrue(
+                sourceContent.Contains("username = @username"),
+                "The SQL query must use the placeholder 'username = @username'. " +
+                "Parameterized form not found — the query may still be vulnerable.");
+
+            Assert.IsTrue(
+                sourceContent.Contains("pwd = @pwd"),
+                "The SQL query must use the placeholder 'pwd = @pwd'. " +
+                "Parameterized form not found — the query may still be vulnerable.");
+        }
+
         // -------------------------------------------------------------------------
-        // Helper
+        // Helper methods
         // -------------------------------------------------------------------------
+
+        /// <summary>
+        /// Reads the content of SQLi_1 - Copy/Program.cs relative to the test
+        /// assembly location.  Returns null and marks the test Inconclusive when the
+        /// file cannot be found (e.g., running in a CI environment without sources).
+        /// </summary>
+        private string ReadCopySourceFile()
+        {
+            string testAssemblyDir = Path.GetDirectoryName(
+                Assembly.GetExecutingAssembly().Location) ?? string.Empty;
+            string sourcePath = Path.GetFullPath(
+                Path.Combine(testAssemblyDir, SqliCopySourceFilePath));
+
+            if (!File.Exists(sourcePath))
+            {
+                Assert.Inconclusive(
+                    "Source file 'SQLi_1 - Copy/Program.cs' not found at expected path '" +
+                    sourcePath + "'. Skipping SQL injection source-level check.");
+                return null;
+            }
+
+            return File.ReadAllText(sourcePath, Encoding.UTF8);
+        }
 
         /// <summary>
         /// Returns true if <paramref name="haystack"/> contains the byte sequence
