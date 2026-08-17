@@ -37,21 +37,25 @@ namespace SQLi_1
             {
                 using (var conn = new SqlConnection("conn..."))
                 {
-                    var sql = "SELECT * FROM Users WHERE username = '" + username + "' AND pwd = '" + password + "'";
-                    using (var cmd = new SqlCommand(sql))
+                    // Use a parameterized query to prevent SQL injection.
+                    // User-supplied values are bound as SqlParameter objects and
+                    // never interpolated into the query string.
+                    var sql = "SELECT * FROM Users WHERE username = @username AND pwd = @pwd";
+                    using (var cmd = new SqlCommand(sql, conn))
                     {
-                        cmd.Connection = conn;
+                        cmd.Parameters.Add("@username", System.Data.SqlDbType.NVarChar, 256).Value = username;
+                        cmd.Parameters.Add("@pwd", System.Data.SqlDbType.NVarChar, 256).Value = password;
                         cmd.ExecuteScalar();
                     }
 
                 }
             }
-            catch  
+            catch
             {
 
                 Console.WriteLine("An error has occurred !!");
             }
-           
+
         }
     }
 }
